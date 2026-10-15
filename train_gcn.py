@@ -1,9 +1,13 @@
-"""Train/evaluate Vanilla GCN on Zachary's Karate Club network (NetworkX dataset)."""
+"""Train/evaluate a two-layer Vanilla GCN on Zachary's Karate Club graph."""
 import random
 import numpy as np
 import networkx as nx
 import torch
 import torch.nn.functional as F
+from sklearn.metrics import (
+    accuracy_score, precision_recall_fscore_support, confusion_matrix,
+    classification_report
+)
 from gcn_model import VanillaGCN, normalize_adjacency
 
 
@@ -13,22 +17,19 @@ def main():
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    # A small real social network included with NetworkX.
     G = nx.karate_club_graph()
     A_np = nx.to_numpy_array(G, dtype=np.float32)
-    # Club membership is the binary target label.
     labels_np = np.array([
         0 if G.nodes[i]["club"] == "Mr. Hi" else 1
         for i in range(G.number_of_nodes())
     ], dtype=np.int64)
 
-    # Identity features: each node starts with a unique one-hot feature.
     X = torch.eye(G.number_of_nodes(), dtype=torch.float32)
     A = torch.tensor(A_np, dtype=torch.float32)
     A_hat = normalize_adjacency(A)
     y = torch.tensor(labels_np, dtype=torch.long)
 
-    # Reproducible stratified split: 60% training per class, remaining test.
+    # Reproducible stratified split: about 60% from each class for training.
     rng = np.random.default_rng(seed)
     train_idx, test_idx = [], []
     for cls in np.unique(labels_np):
@@ -40,7 +41,7 @@ def main():
     train_idx = torch.tensor(sorted(train_idx), dtype=torch.long)
     test_idx = torch.tensor(sorted(test_idx), dtype=torch.long)
 
-    model = VanillaGCN(input_dim=X.shape[1], hidden_dim=16, num_classes=2, dropout=0.3)
+    model = VanillaGCN(X.shape[1], 16, 2, dropout=0.3)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
 
     for epoch in range(1, 201):
@@ -54,21 +55,39 @@ def main():
             model.eval()
             with torch.no_grad():
                 pred = model(X, A_hat).argmax(dim=1)
-                train_acc = (pred[train_idx] == y[train_idx]).float().mean().item()
-                test_acc = (pred[test_idx] == y[test_idx]).float().mean().item()
+            train_acc = accuracy_score(y[train_idx].numpy(), pred[train_idx].numpy())
+            test_acc = accuracy_score(y[test_idx].numpy(), pred[test_idx].numpy())
             print(f"Epoch {epoch:3d} | loss={loss.item():.4f} | "
                   f"train_acc={train_acc:.3f} | test_acc={test_acc:.3f}")
 
     model.eval()
     with torch.no_grad():
-        pred = model(X, A_hat).argmax(dim=1)
-        test_acc = (pred[test_idx] == y[test_idx]).float().mean().item()
-    print("\nDataset: Zachary Karate Club")
+        pred = model(X, A_hat).argmax(dim=1).cpu().numpy()
+    y_np = y.cpu().numpy()
+    y_test = y_np[test_idx.numpy()]
+    pred_test = pred[test_idx.numpy()]
+
+    accuracy = accuracy_score(y_test, pred_test)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_test, pred_test, labels=[0, 1], average="macro", zero_division=0
+    )
+    cm = confusion_matrix(y_test, pred_test, labels=[0, 1])
+
+    print("\\nDataset: Zachary Karate Club")
     print(f"Nodes: {G.number_of_nodes()} | Edges: {G.number_of_edges()}")
     print(f"Train nodes: {len(train_idx)} | Test nodes: {len(test_idx)}")
-    print(f"Final test accuracy: {test_acc:.3f}")
-    print("Note: this is a small educational demonstration; results can vary with split/seed.")
-
+    print(f"Final test accuracy: {accuracy:.3f}")
+    print(f"Macro precision: {precision:.3f}")
+    print(f"Macro recall:    {recall:.3f}")
+    print(f"Macro F1-score:  {f1:.3f}")
+    print("Confusion matrix (rows=true, columns=predicted; labels [0, 1]):")
+    print(cm)
+    print("\\nPer-class report:")
+    print(classification_report(
+        y_test, pred_test, labels=[0, 1],
+        target_names=["Mr. Hi", "Officer"], zero_division=0
+    ))
+    print("Note: small educational transductive demonstration; results may vary.")
 
 if __name__ == "__main__":
     main()

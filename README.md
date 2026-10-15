@@ -1,98 +1,144 @@
 # Baby Graph Kernel + Vanilla GCN
 
-Two independent graph-learning implementations in one educational repository:
-1. A degree-histogram graph kernel implemented from scratch using NumPy.
-2. A two-layer Vanilla Graph Convolutional Network (GCN) implemented directly in PyTorch and trained on Zachary's Karate Club network.
+This educational repository contains two independent graph-learning implementations:
 
-## Project structure
+1. A degree-histogram graph kernel implemented from scratch with NumPy.
+2. A two-layer Vanilla Graph Convolutional Network implemented directly in PyTorch and trained on Zachary's Karate Club graph.
+
+## Repository structure
 
 ```text
 baby-kernel-gcn-assignment/
 ├── baby_kernel.py
 ├── experiments.py
-├── graph_features.py (features are currently in baby_kernel.py)
+├── visualize.py
 ├── gcn_model.py
 ├── train_gcn.py
-├── tests/
-│   └── test_baby_kernel.py
+├── tests/test_baby_kernel.py
+├── results/
 ├── requirements.txt
 └── README.md
 ```
 
 ## Setup
 
-```bash
-python -m venv .venv
-```
-
-Windows PowerShell:
 ```powershell
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-macOS/Linux:
-```bash
-source .venv/bin/activate
-```
-
-Install dependencies:
-```bash
 python -m pip install -r requirements.txt
 ```
 
 ## Part 1 — Baby graph kernel
 
-### Definition
-For graph `G`, define the degree histogram `h_G(d)` as the number of nodes of degree `d`.
+For graph \(G\), \(h_G(d)\) is the number of nodes of degree \(d\). The baseline kernel is:
 
-The baseline kernel is the dot product:
+\[
+K(G_1,G_2)=h_{G_1}^{T}h_{G_2}
+\]
 
-`K(G1, G2) = h_G1^T h_G2`
+Since this is a dot product in an explicit feature space, for real coefficients \(c_i\):
 
-This is a kernel because it is an inner product in an explicit feature space. For any graphs `G_i` and real coefficients `c_i`:
+\[
+\sum_i\sum_j c_i c_j K(G_i,G_j)
+=\left\|\sum_i c_i h_{G_i}\right\|^2\geq 0
+\]
 
-`sum_i sum_j c_i c_j K(G_i,G_j) = ||sum_i c_i h_Gi||^2 >= 0`
+This establishes positive semidefiniteness (PSD).
 
-So the Gram matrix is positive semidefinite (PSD), up to floating-point tolerance.
+### Recorded experiments
 
-### Mathematical properties tested
-- **Permutation invariance:** node relabelling changes adjacency-matrix row/column order but not the degree histogram.
-- **Symmetry:** `K(G1,G2) = K(G2,G1)` because the dot product is symmetric.
-- **PSD:** the kernel Gram matrix has nonnegative eigenvalues, within numerical tolerance.
-- **Limitation:** same degree histograms do not imply graph isomorphism.
+| Experiment | Observed result | Interpretation |
+|---|---:|---|
+| Path-3 degree vector | `[1, 2, 1]` | Two endpoints of degree 1 and one centre of degree 2. |
+| Path-3 histogram | `[0, 2, 1]` | Two nodes have degree 1; one has degree 2. |
+| Triangle histogram | `[0, 0, 3]` | All three nodes have degree 2. |
+| \(K(\mathrm{path},\mathrm{triangle})\) | 3 | Dot product of the histograms. |
+| \(K(\mathrm{path},\mathrm{path})\) | 5 | Squared norm of the path histogram. |
+| Baseline \(K(C_6,\mathrm{two\ triangles})\) | 36 | The baseline cannot distinguish this non-isomorphic pair. |
+| Enhanced score for that pair | 38 | Component and triangle features distinguish this example. |
 
-### Counterexample
-A 6-cycle (`C6`) and two disjoint triangles both have six nodes, six edges, and degree histogram `[0, 0, 6, 0, ...]`. They are not isomorphic: `C6` is connected; two triangles have two connected components. The baseline degree kernel gives them the same score.
+A cycle \(C_6\) and two disconnected triangles each have six nodes, six edges, and histogram `[0, 0, 6]`. The baseline score is \(6\cdot6=36\), even though the graphs are not isomorphic: the cycle has one connected component and the other graph has two. The enhanced kernel adds connected-component count and triangle count. It distinguishes this pair but is not a complete graph-isomorphism test.
 
-An optional enhanced feature vector adds connected-component count and triangle count. This demonstrates how hand-designed features can distinguish this specific counterexample, but it still is not a complete graph-isomorphism test.
+### Mathematical properties
 
-### Run
-```bash
+- **Permutation invariance:** relabelling nodes changes adjacency row/column order but not the degree histogram.
+- **Symmetry:** \(K(G_1,G_2)=K(G_2,G_1)\), because dot products are symmetric.
+- **PSD:** the recorded kernel matrix eigenvalues, rounded to eight decimals, were `[-0.00000000, -0.00000000, -0.00000000, 7.78727005, 83.21272995]`. The tiny negative zeros are floating-point rounding; the PSD check passed with tolerance \(10^{-8}\).
+
+Run the experiments and tests:
+
+```powershell
 python baby_kernel.py
 python experiments.py
 python -m pytest -q
 ```
 
+### Visualisations
+
+```powershell
+python visualize.py
+```
+
+The script saves `results/isomorphism_counterexample.png` and `results/kernel_similarity_heatmap.png`.
+
 ## Part 2 — Vanilla GCN
 
-Dataset: Zachary's Karate Club network supplied by NetworkX (34 nodes, 78 edges). Each node's club membership is a binary label. Identity features are used as a simple, transparent feature baseline.
+### Dataset
 
-The normalized adjacency is:
+Zachary's Karate Club network from NetworkX has 34 nodes and 78 edges. Each node is labelled according to its recorded club affiliation. The initial node-feature matrix is the identity matrix, giving each node a unique one-hot feature.
 
-`A_hat = D_tilde^(-1/2) (A + I) D_tilde^(-1/2)`
+### Model mathematics
 
-Two-layer GCN:
+Add self-loops and normalize the adjacency matrix:
 
-`H1 = ReLU(A_hat X W0)`
+\[
+\tilde A=A+I,\qquad
+\hat A=\tilde D^{-1/2}\tilde A\tilde D^{-1/2}
+\]
 
-`Z = A_hat H1 W1`
+The two layers are:
 
-The model is trained with cross-entropy loss on training nodes and evaluated on held-out nodes. The split and random seed are fixed for reproducibility, but this tiny classic graph is an educational demonstration, not a statistically reliable benchmark. Test accuracy may vary with software versions and split choices.
+\[
+H^{(1)}=\operatorname{ReLU}(\hat A X W^{(0)}),\qquad
+Z=\hat A H^{(1)}W^{(1)}
+\]
 
-Run:
-```bash
+The model is trained using cross-entropy loss on the training nodes, with Adam updating the weights.
+
+### Recorded baseline result
+
+For the fixed seed-42 run, there were 20 training nodes and 14 held-out test nodes:
+
+| Metric | Observed result |
+|---|---:|
+| Training loss at epoch 200 | 0.0233 |
+| Training accuracy | 100.0% |
+| Test accuracy | 92.9% (13/14 nodes) |
+
+Test accuracy was 100% at epoch 50 but 92.9% at epoch 200. With only 14 test nodes, one wrong prediction changes accuracy by about 7.14 percentage points. Treat this as an educational result, not a reliable estimate for larger graphs.
+
+### Additional evaluation metrics
+
+```powershell
 python train_gcn.py
 ```
 
+The updated script reports macro precision, macro recall, macro F1-score, a confusion matrix and a per-class report. If your output differs due to environment or version differences, record the values from your own run.
 
-.
+## Limitations
+
+- Degree histograms do not capture all graph structure; non-isomorphic graphs may share them.
+- The enhanced kernel is based on hand-designed features and is not a complete isomorphism algorithm.
+- The GCN uses identity features and a small graph, so it is an educational demonstration rather than a production benchmark.
+- Future work: compare to a majority-class baseline, test multiple stratified splits and investigate richer node features.
+
+## Commit the improvements to GitHub
+
+```powershell
+python visualize.py
+python -m pytest -q
+python train_gcn.py
+git add README.md train_gcn.py requirements.txt visualize.py .gitignore results/
+git commit -m "Add kernel visualizations and GCN evaluation metrics"
+git push
+```
